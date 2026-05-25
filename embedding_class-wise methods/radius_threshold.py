@@ -8,7 +8,7 @@ import numpy as np
 
 
 DEFAULT_MODEL_PATH = Path("embedding_class-wise methods/outputs/radius_threshold_model.npz")
-DEFAULT_BERT_PATH = Path("BERT/all-MiniLM-L6-v2")
+DEFAULT_BERT_PATH = Path("BERT/minilm_lora")
 
 
 def _normalize_rows(values: np.ndarray) -> np.ndarray:
@@ -16,29 +16,10 @@ def _normalize_rows(values: np.ndarray) -> np.ndarray:
     return values / np.maximum(norms, 1e-12)
 
 
-def _choose_device() -> str:
-    import torch
-
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def _embed_texts(texts: str | list[str], model_dir: Path = DEFAULT_BERT_PATH) -> np.ndarray:
-    from sentence_transformers import SentenceTransformer
+    from BERT.embedding_utils import embed_texts
 
-    text_list = [texts] if isinstance(texts, str) else texts
-    model = SentenceTransformer(str(model_dir), device=_choose_device())
-    embeddings = model.encode(
-        text_list,
-        batch_size=32,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
-    return embeddings.astype(np.float32)
+    return embed_texts(texts, model_dir=model_dir, batch_size=32, show_progress=False)
 
 
 class RadiusThresholdModel:

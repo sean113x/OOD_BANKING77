@@ -17,8 +17,8 @@ Raw query
 The shared embedding model is:
 
 ```text
-sentence-transformers/all-MiniLM-L6-v2
-BERT/all-MiniLM-L6-v2/
+MiniLM LoRA adapter: BERT/minilm_lora/
+Base MiniLM model: sentence-transformers/all-MiniLM-L6-v2
 ```
 
 Embedding extraction and saved embedding files are managed under `BERT/`.

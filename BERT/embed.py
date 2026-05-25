@@ -1,89 +1,107 @@
-"""
-Extract all-MiniLM-L6-v2 embeddings using raw transformers (no sentence-transformers).
+"""Generate preprocessed dataset embeddings with the MiniLM LoRA adapter."""
 
-Output (BERT/embeddings/):
-  train_embs.npy       (7932, 384)
-  train_labels.npy     (7932,)
-  id_test_embs.npy     (2480, 384)
-  id_test_labels.npy   (2480,)
-  ood_test_embs.npy    (2671, 384)
+from __future__ import annotations
 
-Usage (from project root):
-  python BERT/embed.py
-"""
-
-import os
+import argparse
+import csv
 import sys
+from pathlib import Path
+
 import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModel
 
-sys.path.insert(0, "src")
-from dataset import TRAIN_CSV, ID_TEST, OOD_TEST, build_label_map
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-OUT_DIR        = "BERT/embeddings"
-MODEL_NAME     = "sentence-transformers/all-MiniLM-L6-v2"
-FINETUNED_DIR  = "BERT/models/minilm_lora"   # use fine-tuned if available
-BATCH          = 64
-DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
+from BERT.embedding_utils import (  # noqa: E402
+    DEFAULT_ADAPTER_DIR,
+    DEFAULT_BASE_MODEL_NAME,
+    encode_texts,
+    load_embedding_model,
+)
 
 
-def mean_pooling(model_output, attention_mask):
-    token_embs = model_output[0]                          # (B, L, 384)
-    mask = attention_mask.unsqueeze(-1).expand(token_embs.size()).float()
-    return torch.sum(token_embs * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
+DEFAULT_DATA_DIR = Path("dataset/preprocessed")
+DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "embedded"
+SPLITS = {
+    "OOD_train": "OOD_train.csv",
+    "classification_test": "classification_test.csv",
+    "OOD_test": "OOD_test.csv",
+}
 
 
-@torch.no_grad()
-def encode(tokenizer, model, texts: list[str]) -> np.ndarray:
-    all_embs = []
-    for i in range(0, len(texts), BATCH):
-        batch = texts[i : i + BATCH]
-        enc = tokenizer(batch, padding=True, truncation=True, max_length=64, return_tensors="pt")
-        enc = {k: v.to(DEVICE) for k, v in enc.items()}
-        out = model(**enc)
-        embs = mean_pooling(out, enc["attention_mask"])
-        embs = F.normalize(embs, dim=-1)
-        all_embs.append(embs.cpu().numpy())
-        if (i // BATCH) % 10 == 0:
-            print(f"  {i + len(batch)}/{len(texts)}", end="\r")
-    print()
-    return np.concatenate(all_embs, axis=0).astype(np.float32)
+def read_csv(path: Path) -> dict[str, np.ndarray | list[str]]:
+    with path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    texts = [row["text"] for row in rows]
+    labels = np.array([row["label"] for row in rows])
+    label_texts = np.array([row["label_text"] for row in rows])
+    is_ood = np.array([row.get("is_ood", "0") for row in rows])
+    ood_types = np.array([row.get("ood_type", "id") for row in rows])
+    sources = np.array([row.get("source", "banking77") for row in rows])
+    return {
+        "texts": texts,
+        "labels": labels,
+        "label_texts": label_texts,
+        "is_ood": is_ood,
+        "ood_types": ood_types,
+        "sources": sources,
+    }
 
 
-def load_split(csv_path, label2id):
-    df = pd.read_csv(csv_path)
-    texts  = df["text"].tolist()
-    labels = np.array([label2id.get(lt, -1) for lt in df["label_text"].tolist()])
-    return texts, labels
+def write_embeddings(
+    path: Path,
+    embeddings: np.ndarray,
+    data: dict[str, np.ndarray | list[str]],
+    model_dir: Path,
+    base_model_name: str | None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        embeddings=embeddings.astype(np.float32),
+        texts=np.array(data["texts"]),
+        labels=data["labels"],
+        label_texts=data["label_texts"],
+        is_ood=data["is_ood"],
+        ood_types=data["ood_types"],
+        sources=data["sources"],
+        model_dir=np.array(str(model_dir)),
+        base_model_name=np.array(base_model_name or ""),
+    )
 
 
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    label2id, _ = build_label_map(TRAIN_CSV)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-dir", type=Path, default=DEFAULT_ADAPTER_DIR)
+    parser.add_argument("--base-model-name", default=DEFAULT_BASE_MODEL_NAME)
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--device", choices=("auto", "cuda", "mps", "cpu"), default="auto")
+    return parser.parse_args()
 
-    # Use fine-tuned LoRA model if available, otherwise fall back to base
-    if os.path.isdir(FINETUNED_DIR):
-        print(f"Loading fine-tuned model from {FINETUNED_DIR} ...")
-        tokenizer = AutoTokenizer.from_pretrained(FINETUNED_DIR)
-        model     = AutoModel.from_pretrained(FINETUNED_DIR).to(DEVICE)
-    else:
-        print(f"Loading base {MODEL_NAME} on {DEVICE} ...")
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        model     = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE)
-    model.eval()
 
-    for name, csv_path in [("train", TRAIN_CSV), ("id_test", ID_TEST), ("ood_test", OOD_TEST)]:
-        print(f"Encoding {name} ...")
-        texts, labels = load_split(csv_path, label2id)
-        embs = encode(tokenizer, model, texts)
-        np.save(f"{OUT_DIR}/{name}_embs.npy",   embs)
-        np.save(f"{OUT_DIR}/{name}_labels.npy", labels)
-        print(f"  {name}: {embs.shape}")
+def main() -> None:
+    args = parse_args()
+    tokenizer, model, device = load_embedding_model(args.model_dir, args.base_model_name, args.device)
+    print(f"Using model: {args.model_dir}")
+    print(f"Using base model: {args.base_model_name}")
+    print(f"Using device: {device}")
 
-    print(f"\nSaved to {OUT_DIR}/")
+    for split_name, filename in SPLITS.items():
+        input_path = args.data_dir / filename
+        output_path = args.output_dir / f"{split_name}_embeddings.npz"
+        data = read_csv(input_path)
+        embeddings = encode_texts(
+            tokenizer,
+            model,
+            data["texts"],
+            device,
+            batch_size=args.batch_size,
+            show_progress=True,
+        )
+        write_embeddings(output_path, embeddings, data, args.model_dir, args.base_model_name)
+        print(f"Wrote {output_path} with shape {embeddings.shape}")
 
 
 if __name__ == "__main__":

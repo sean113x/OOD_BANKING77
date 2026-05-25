@@ -210,7 +210,7 @@ fit(train_embeddings, train_label_texts, save=True)
 load(model_path)
 score_embeddings(target_embeddings)
 predict_embeddings(target_embeddings, threshold=None)
-score_text(text_or_texts, model_dir="BERT/all-MiniLM-L6-v2")
+score_text(text_or_texts, model_dir="BERT/minilm_lora")
 ```
 
 Class behavior:

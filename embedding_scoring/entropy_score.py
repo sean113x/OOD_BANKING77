@@ -29,7 +29,7 @@ def main():
 
     print("── Section 4: Classifier-output OOD Scoring — Entropy ──")
     for name in ["lr", "mlp"]:
-        with open(f"checkpoints/clf_{name}.pkl", "rb") as f:
+        with open(f"models/clf_{name}.pkl", "rb") as f:
             clf = pickle.load(f)
         ood_metrics(entropy_score(clf, id_embs), entropy_score(clf, ood_embs), f"Entropy ({name.upper()})")
 

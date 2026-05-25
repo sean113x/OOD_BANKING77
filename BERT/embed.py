@@ -25,7 +25,7 @@ from dataset import TRAIN_CSV, ID_TEST, OOD_TEST, build_label_map
 
 OUT_DIR        = "BERT/embeddings"
 MODEL_NAME     = "sentence-transformers/all-MiniLM-L6-v2"
-FINETUNED_DIR  = "checkpoints/minilm_lora"   # use fine-tuned if available
+FINETUNED_DIR  = "BERT/models/minilm_lora"   # use fine-tuned if available
 BATCH          = 64
 DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
 

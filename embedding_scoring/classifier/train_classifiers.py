@@ -1,6 +1,6 @@
 """
 Train Logistic Regression and MLP on sentence-transformer embeddings.
-Saves classifiers to checkpoints/ for use by all Section 4 scoring scripts.
+Saves classifiers to models/ for use by all Section 4 scoring scripts.
 
 Usage (from project root):
   python methods/4_classifier_output/train_classifiers.py
@@ -17,11 +17,11 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.metrics        import accuracy_score
 from shared.evaluate        import load_embeddings
 
-CKPT_DIR = "checkpoints"
+MODEL_DIR = "models"
 
 
 def main():
-    os.makedirs(CKPT_DIR, exist_ok=True)
+    os.makedirs(MODEL_DIR, exist_ok=True)
     train_embs, train_labels, id_embs, id_labels, _ = load_embeddings()
 
     classifiers = {
@@ -35,7 +35,7 @@ def main():
         acc = accuracy_score(id_labels, clf.predict(id_embs))
         print(f"  ID test accuracy: {acc:.4f}")
 
-        path = f"{CKPT_DIR}/clf_{name}.pkl"
+        path = f"{MODEL_DIR}/clf_{name}.pkl"
         with open(path, "wb") as f:
             pickle.dump(clf, f)
         print(f"  Saved → {path}")

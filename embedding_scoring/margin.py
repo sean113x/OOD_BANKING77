@@ -30,7 +30,7 @@ def main():
 
     print("── Section 4: Classifier-output OOD Scoring — Margin ──")
     for name in ["lr", "mlp"]:
-        with open(f"checkpoints/clf_{name}.pkl", "rb") as f:
+        with open(f"models/clf_{name}.pkl", "rb") as f:
             clf = pickle.load(f)
         ood_metrics(margin_score(clf, id_embs), margin_score(clf, ood_embs), f"Margin ({name.upper()})")
 

@@ -64,18 +64,6 @@ def print_metrics(name: str, split: str, y_true: np.ndarray, scores: np.ndarray)
     )
 
 
-def print_metrics_at_threshold(name: str, split: str, y_true: np.ndarray, scores: np.ndarray, threshold: float) -> None:
-    y_pred = (scores > threshold).astype(int)
-    print(
-        f"{name} [{split}]: "
-        f"AUROC={roc_auc_score(y_true, scores):.4f}, "
-        f"Acc={accuracy_score(y_true, y_pred):.4f}, "
-        f"Precision={precision_score(y_true, y_pred, zero_division=0):.4f}, "
-        f"Recall={recall_score(y_true, y_pred, zero_division=0):.4f}, "
-        f"Thr={threshold:.6g}"
-    )
-
-
 def masks_by_ood_type(test: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     ood_types = test["ood_types"]
     near_mask = (ood_types == "id") | (ood_types == "near")
@@ -89,20 +77,6 @@ def print_split_metrics(name: str, y_true: np.ndarray, scores: np.ndarray, near_
     print_metrics(name, "far", y_true[far_mask], scores[far_mask])
 
 
-def print_split_metrics_at_threshold(
-    name: str,
-    label: str,
-    y_true: np.ndarray,
-    scores: np.ndarray,
-    near_mask: np.ndarray,
-    far_mask: np.ndarray,
-    threshold: float,
-) -> None:
-    print_metrics_at_threshold(name, f"overall_{label}", y_true, scores, threshold)
-    print_metrics_at_threshold(name, f"near_{label}", y_true[near_mask], scores[near_mask], threshold)
-    print_metrics_at_threshold(name, f"far_{label}", y_true[far_mask], scores[far_mask], threshold)
-
-
 def evaluate(name: str, model, train: dict[str, np.ndarray], test: dict[str, np.ndarray]) -> None:
     print(f"\n{name}")
     model.fit(train["embeddings"], train["label_texts"], save=True)
@@ -110,48 +84,6 @@ def evaluate(name: str, model, train: dict[str, np.ndarray], test: dict[str, np.
     y_true = test["is_ood"].astype(int)
     near_mask, far_mask = masks_by_ood_type(test)
     print_split_metrics(name, y_true, scores, near_mask, far_mask)
-
-
-def evaluate_gmm_sweep(train: dict[str, np.ndarray], test: dict[str, np.ndarray], output_dir: Path) -> None:
-    y_true = test["is_ood"].astype(int)
-    near_mask, far_mask = masks_by_ood_type(test)
-    train_embeddings = train["embeddings"]
-    covariance_types = ["full", "tied", "diag", "spherical"]
-    threshold_percentiles = [90, 95, 97, 98, 99]
-
-    for covariance_type in covariance_types:
-        name = f"gmm_62_{covariance_type}"
-        print(f"\n{name}")
-        model = GaussianMixtureOODModel(
-            output_dir / f"{name}_model.pkl",
-            n_components=62,
-            covariance_type=covariance_type,
-            reg_covar=1e-5,
-            max_iter=200,
-        )
-        model.fit(train_embeddings, train["label_texts"], save=True)
-        scores, _ = model.score_embeddings(test["embeddings"])
-        train_scores, _ = model.score_embeddings(train_embeddings)
-
-        print_split_metrics(name, y_true, scores, near_mask, far_mask)
-        for percentile in threshold_percentiles:
-            threshold = float(np.percentile(train_scores, percentile))
-            print_split_metrics_at_threshold(name, f"p{percentile}", y_true, scores, near_mask, far_mask, threshold)
-
-
-def evaluate_one_class_svm_sweep(train: dict[str, np.ndarray], test: dict[str, np.ndarray], output_dir: Path) -> None:
-    y_true = test["is_ood"].astype(int)
-    near_mask, far_mask = masks_by_ood_type(test)
-    nu = 0.3
-    for gamma in [15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0]:
-        gamma_tag = str(gamma).replace(".", "_")
-        name = f"one_class_svm_nu0_3_gamma{gamma_tag}"
-        print(f"\n{name}")
-        model = OneClassSVMModel(output_dir / f"{name}_model.pkl", nu=nu, gamma=gamma)
-        model.fit(train["embeddings"], train["label_texts"], save=True)
-        scores, _ = model.score_embeddings(test["embeddings"])
-        print_split_metrics(name, y_true, scores, near_mask, far_mask)
-        print_split_metrics_at_threshold(name, "default", y_true, scores, near_mask, far_mask, model.threshold)
 
 
 def main() -> None:
@@ -164,11 +96,32 @@ def main() -> None:
     evaluate("radius", RadiusThresholdModel(class_output_dir / "radius_threshold_model.npz"), train, test)
     evaluate("mahalanobis", MahalanobisDistanceModel(class_output_dir / "mahalanobis_distance_model.npz"), train, test)
 
-    evaluate("knn_distance", KNNDistanceModel(distribution_output_dir / "knn_distance_model.npz"), train, test)
+    evaluate("knn_distance", KNNDistanceModel(distribution_output_dir / "knn_distance_model.npz", n_neighbors=1), train, test)
     evaluate("global_mahalanobis", GlobalMahalanobisModel(distribution_output_dir / "global_mahalanobis_model.npz"), train, test)
-    evaluate("pca_reconstruction", PCAReconstructionModel(distribution_output_dir / "pca_reconstruction_model.pkl"), train, test)
-    evaluate_gmm_sweep(train, test, distribution_output_dir)
-    evaluate_one_class_svm_sweep(train, test, distribution_output_dir)
+    evaluate(
+        "gaussian_mixture",
+        GaussianMixtureOODModel(
+            distribution_output_dir / "gaussian_mixture_model.pkl",
+            n_components=62,
+            covariance_type="full",
+            reg_covar=1e-5,
+            max_iter=200,
+        ),
+        train,
+        test,
+    )
+    evaluate(
+        "one_class_svm",
+        OneClassSVMModel(distribution_output_dir / "one_class_svm_model.pkl", nu=0.3, gamma=30.0),
+        train,
+        test,
+    )
+    evaluate(
+        "pca_reconstruction",
+        PCAReconstructionModel(distribution_output_dir / "pca_reconstruction_model.pkl", n_components=256),
+        train,
+        test,
+    )
 
 
 if __name__ == "__main__":

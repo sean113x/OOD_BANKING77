@@ -8,7 +8,7 @@ Usage (from project root):
   CUDA_VISIBLE_DEVICES=0 python BERT/finetune.py
 
 Output:
-  BERT/models/minilm_lora/   ← fine-tuned encoder weights
+  BERT/minilm_lora/   ← fine-tuned encoder adapter weights
 """
 
 import os
@@ -25,7 +25,7 @@ from peft import LoraConfig, get_peft_model
 sys.path.insert(0, "src")
 from dataset import TRAIN_CSV, build_label_map
 
-CKPT_DIR   = "BERT/models/minilm_lora"
+CKPT_DIR   = "BERT/minilm_lora"
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EPOCHS     = 30
 BATCH      = 64

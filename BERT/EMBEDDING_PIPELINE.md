@@ -7,8 +7,8 @@ the BERT model again.
 ## Model
 
 ```text
-sentence-transformers/all-MiniLM-L6-v2
-local path: BERT/all-MiniLM-L6-v2/
+MiniLM LoRA adapter: BERT/minilm_lora/
+Base MiniLM model: sentence-transformers/all-MiniLM-L6-v2
 embedding dim: 384
 ```
 
@@ -27,6 +27,12 @@ text,label,label_text
 ```
 
 ## Output Embedding Files
+
+Run:
+
+```text
+python BERT/embed.py
+```
 
 Output location:
 
@@ -52,6 +58,8 @@ label_texts: original BANKING77 label names
 is_ood: 0 for ID, 1 for OOD
 ood_types: id, near, or far
 sources: source split / dataset name
+model_dir: adapter path used for embedding
+base_model_name: Hugging Face base model name
 ```
 
 ## Embedding Settings

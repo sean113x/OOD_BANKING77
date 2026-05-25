@@ -23,10 +23,11 @@ from transformers import AutoTokenizer, AutoModel
 sys.path.insert(0, "src")
 from dataset import TRAIN_CSV, ID_TEST, OOD_TEST, build_label_map
 
-OUT_DIR    = "BERT/embeddings"
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-BATCH      = 64
-DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
+OUT_DIR        = "BERT/embeddings"
+MODEL_NAME     = "sentence-transformers/all-MiniLM-L6-v2"
+FINETUNED_DIR  = "checkpoints/minilm_lora"   # use fine-tuned if available
+BATCH          = 64
+DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def mean_pooling(model_output, attention_mask):
@@ -63,9 +64,15 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     label2id, _ = build_label_map(TRAIN_CSV)
 
-    print(f"Loading {MODEL_NAME} on {DEVICE} ...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model     = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE)
+    # Use fine-tuned LoRA model if available, otherwise fall back to base
+    if os.path.isdir(FINETUNED_DIR):
+        print(f"Loading fine-tuned model from {FINETUNED_DIR} ...")
+        tokenizer = AutoTokenizer.from_pretrained(FINETUNED_DIR)
+        model     = AutoModel.from_pretrained(FINETUNED_DIR).to(DEVICE)
+    else:
+        print(f"Loading base {MODEL_NAME} on {DEVICE} ...")
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        model     = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE)
     model.eval()
 
     for name, csv_path in [("train", TRAIN_CSV), ("id_test", ID_TEST), ("ood_test", OOD_TEST)]:

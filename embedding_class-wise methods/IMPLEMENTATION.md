@@ -101,7 +101,7 @@ Threshold to expose:
 
 ```text
 radius_percentile_per_class
-default: 95
+default: 90
 ```
 
 The model can use `score > 0` as the direct OOD rule after each class radius is

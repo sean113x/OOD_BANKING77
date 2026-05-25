@@ -217,6 +217,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Local training checkpoints only
+checkpoints/
+BERT/models/**/trainer_state.pt
 # macOS
 .DS_Store
 

@@ -29,7 +29,7 @@ class RadiusThresholdModel:
         self,
         model_path: str | Path = DEFAULT_MODEL_PATH,
         distance_metric: str = "cosine",
-        radius_percentile: float = 95.0,
+        radius_percentile: float = 90.0,
         minimum_radius: float = 1e-6,
     ) -> None:
         self.model_path = Path(model_path)

@@ -28,7 +28,7 @@ Embedding extraction and saved embedding files are managed under `BERT/`.
 | Section | Category | Methods |
 | --- | --- | --- |
 | 1 | Embedding + class-wise boundary | Centroid distance, class-wise radius, class-wise Mahalanobis |
-| 2 | Embedding + distribution / support estimation | LDA, Gaussian Naive Bayes, kNN, Linear One-Class SVM, RBF Kernel One-Class SVM |
+| 2 | Embedding + distance / support / density estimation | kNN distance, global Mahalanobis with shrinkage covariance, Gaussian Mixture Model, One-Class SVM, PCA reconstruction error |
 | 3 | Embedding + anomaly detection | Isolation Forest, LOF |
 | 4 | Embedding + classifier-output OOD scoring | Multinomial Logistic Regression, MLP Classifier; MSP, entropy, margin, maximum logit, energy |
 | 5 | Advanced / SOTA-inspired | Temperature-scaled energy, temperature-scaled MSP/entropy, ensemble disagreement |

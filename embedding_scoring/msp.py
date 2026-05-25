@@ -5,21 +5,30 @@ Category: 4 - Embedding + Classifier-output OOD Scoring
 OOD score = 1 - max(softmax(logits))  (higher = more OOD)
 
 Usage (from project root):
-  python methods/4_classifier_output/msp.py
+  python embedding_scoring/msp.py
 """
 
+from __future__ import annotations
+
 import sys
-sys.path.insert(0, "methods")
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import pickle
 import numpy as np
-from scipy.special       import softmax
-from shared.evaluate     import load_embeddings, ood_metrics
+from embedding_scoring.utils import (
+    classifier_path,
+    CLASSIFIER_NAMES,
+    load_embeddings,
+    ood_metrics,
+    predict_probabilities,
+)
 
 
 def msp_score(clf, embs: np.ndarray) -> np.ndarray:
-    logits = clf.predict_log_proba(embs)  # (N, C) log-probs
-    probs  = softmax(logits, axis=1)
+    probs = predict_probabilities(clf, embs)
     return 1.0 - probs.max(axis=1)       # higher = more OOD
 
 
@@ -27,8 +36,8 @@ def main():
     _, _, id_embs, _, ood_embs = load_embeddings()
 
     print("── Section 4: Classifier-output OOD Scoring — MSP ──")
-    for name in ["lr", "mlp"]:
-        with open(f"models/clf_{name}.pkl", "rb") as f:
+    for name in CLASSIFIER_NAMES:
+        with classifier_path(name).open("rb") as f:
             clf = pickle.load(f)
         ood_metrics(msp_score(clf, id_embs), msp_score(clf, ood_embs), f"MSP ({name.upper()})")
 

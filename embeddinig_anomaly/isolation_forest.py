@@ -6,15 +6,19 @@ Fit on training embeddings (62 known classes).
 OOD score = -decision_function(x)  (higher = more OOD)
 
 Usage (from project root):
-  python methods/3_anomaly/isolation_forest.py
+  python embeddinig_anomaly/isolation_forest.py
 """
 
-import sys
-sys.path.insert(0, "methods")
+from __future__ import annotations
 
-import numpy as np
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from sklearn.ensemble import IsolationForest
-from shared.evaluate import load_embeddings, ood_metrics
+from embedding_scoring.utils import load_embeddings, ood_metrics
 
 
 def main():

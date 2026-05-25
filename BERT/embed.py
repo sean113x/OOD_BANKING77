@@ -33,7 +33,7 @@ def read_csv(path: Path) -> dict[str, np.ndarray | list[str]]:
     with path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     texts = [row["text"] for row in rows]
-    labels = np.array([row["label"] for row in rows])
+    labels = np.array([int(row["label"]) for row in rows], dtype=np.int64)
     label_texts = np.array([row["label_text"] for row in rows])
     is_ood = np.array([row.get("is_ood", "0") for row in rows])
     ood_types = np.array([row.get("ood_type", "id") for row in rows])

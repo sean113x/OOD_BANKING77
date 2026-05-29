@@ -1,127 +1,194 @@
-"""Quick evaluation entry point."""
+"""OOD_BANKING77 experiment and interactive model entry point."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import argparse
+import importlib
 
-import numpy as np
-from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
-
-
-ROOT = Path(__file__).parent
-CLASS_WISE_DIR = ROOT / "embedding_class-wise methods"
-DISTRIBUTION_DIR = ROOT / "embedding_distribution analysis methods"
-EMBEDDED_DIR = ROOT / "dataset/preprocessed/embedded"
-
-sys.path.insert(0, str(CLASS_WISE_DIR))
-sys.path.insert(0, str(DISTRIBUTION_DIR))
-
-from centroid_distance import CentroidDistanceModel  # noqa: E402
-from gaussian_mixture import GaussianMixtureOODModel  # noqa: E402
-from global_mahalanobis import GlobalMahalanobisModel  # noqa: E402
-from knn_distance import KNNDistanceModel  # noqa: E402
-from mahalanobis_distance import MahalanobisDistanceModel  # noqa: E402
-from one_class_svm import OneClassSVMModel  # noqa: E402
-from pca_reconstruction import PCAReconstructionModel  # noqa: E402
-from radius_threshold import RadiusThresholdModel  # noqa: E402
+from experiments.common import (
+    all_model_specs,
+    calibrate_threshold,
+    evaluate_split_rows,
+    load_or_fit_model,
+    load_standard_splits,
+    score_model,
+    specs_by_family,
+)
 
 
-def load_npz(path: Path) -> dict[str, np.ndarray]:
-    data = np.load(path, allow_pickle=False)
-    return {key: data[key] for key in data.files}
+EXPERIMENTS = {
+    "1": ("Experiment 1: overall method comparison", "experiments.experiment1_overall_comparison"),
+    "2": ("Experiment 2: hyperparameter sensitivity", "experiments.experiment2_sensitivity"),
+    "3": ("Experiment 3: near-OOD difficulty", "experiments.experiment3_near_ood_difficulty"),
+    "4": ("Experiment 4: accuracy vs OOD reliability", "experiments.experiment4_accuracy_vs_ood"),
+}
 
 
-def best_accuracy_threshold(y_true: np.ndarray, scores: np.ndarray) -> float:
-    unique_scores, inverse, counts = np.unique(scores, return_inverse=True, return_counts=True)
-    positives_by_score = np.zeros(len(unique_scores), dtype=np.int64)
-    np.add.at(positives_by_score, inverse, y_true.astype(int))
-    negatives_by_score = counts - positives_by_score
-
-    total_positive = int(np.sum(y_true))
-    prefix_positive = np.concatenate([[0], np.cumsum(positives_by_score)])
-    prefix_negative = np.concatenate([[0], np.cumsum(negatives_by_score)])
-    accuracy = (total_positive - prefix_positive + prefix_negative) / len(y_true)
-    best_idx = int(np.argmax(accuracy))
-
-    if best_idx == 0:
-        return float(unique_scores[0] - 1e-12)
-    if best_idx == len(unique_scores):
-        return float(unique_scores[-1] + 1e-12)
-    return float((unique_scores[best_idx - 1] + unique_scores[best_idx]) / 2)
-
-
-def print_metrics(name: str, split: str, y_true: np.ndarray, scores: np.ndarray) -> None:
-    threshold = best_accuracy_threshold(y_true, scores)
-    y_pred = (scores > threshold).astype(int)
-    print(
-        f"{name} [{split}]: "
-        f"AUROC={roc_auc_score(y_true, scores):.4f}, "
-        f"Acc={accuracy_score(y_true, y_pred):.4f}, "
-        f"Precision={precision_score(y_true, y_pred, zero_division=0):.4f}, "
-        f"Recall={recall_score(y_true, y_pred, zero_division=0):.4f}, "
-        f"OptThr={threshold:.6g}"
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--experiment",
+        nargs="?",
+        const="menu",
+        choices=["menu", "1", "2", "3", "4", "all"],
+        help="Run an experiment CSV export. Omit the value to choose from a menu.",
     )
+    parser.add_argument("--force-train", action="store_true", help="Retrain models even when saved models exist.")
+    parser.add_argument("--list-models", action="store_true", help="Print available interactive model keys.")
+    return parser.parse_args()
 
 
-def masks_by_ood_type(test: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    ood_types = test["ood_types"]
-    near_mask = (ood_types == "id") | (ood_types == "near")
-    far_mask = (ood_types == "id") | (ood_types == "far")
-    return near_mask, far_mask
+def run_experiment(selection: str, force_train: bool = False) -> None:
+    experiment_ids = list(EXPERIMENTS) if selection == "all" else [selection]
+    for experiment_id in experiment_ids:
+        title, module_name = EXPERIMENTS[experiment_id]
+        print(f"\n{title}")
+        module = importlib.import_module(module_name)
+        if experiment_id in {"1", "3", "4"}:
+            output = module.run(force_train=force_train)
+        else:
+            output = module.run()
+        print(f"Wrote {output}")
 
 
-def print_split_metrics(name: str, y_true: np.ndarray, scores: np.ndarray, near_mask: np.ndarray, far_mask: np.ndarray) -> None:
-    print_metrics(name, "overall", y_true, scores)
-    print_metrics(name, "near", y_true[near_mask], scores[near_mask])
-    print_metrics(name, "far", y_true[far_mask], scores[far_mask])
+def choose_experiment() -> str:
+    print("\nSelect an experiment to run.")
+    for experiment_id, (title, _) in EXPERIMENTS.items():
+        print(f"{experiment_id}. {title}")
+    all_option = len(EXPERIMENTS) + 1
+    print(f"{all_option}. Run all experiments")
+
+    choice = _choose_number("> ", 1, all_option)
+    return "all" if choice == all_option else str(choice)
 
 
-def evaluate(name: str, model, train: dict[str, np.ndarray], test: dict[str, np.ndarray]) -> None:
-    print(f"\n{name}")
-    model.fit(train["embeddings"], train["label_texts"], save=True)
-    scores, _ = model.score_embeddings(test["embeddings"])
-    y_true = test["is_ood"].astype(int)
-    near_mask, far_mask = masks_by_ood_type(test)
-    print_split_metrics(name, y_true, scores, near_mask, far_mask)
+def list_models() -> None:
+    for spec in all_model_specs():
+        print(f"{spec.key}: [{spec.family_id}] {spec.display_name} / {spec.score_name}")
+
+
+def _choose_number(prompt: str, minimum: int, maximum: int) -> int:
+    while True:
+        value = input(prompt).strip()
+        if value.lower() in {"q", "quit", "exit"}:
+            raise KeyboardInterrupt
+        if value.isdigit() and minimum <= int(value) <= maximum:
+            return int(value)
+        print(f"Enter a number from {minimum} to {maximum}. Enter q to quit.")
+
+
+def _label_lookup(train) -> dict[str, str]:
+    lookup = {}
+    for label, label_text in zip(train["labels"], train["label_texts"]):
+        lookup[str(label)] = str(label_text)
+        lookup[str(label_text)] = str(label_text)
+    return lookup
+
+
+def _display_validation_metrics(spec, validation, validation_scores, threshold, fit_seconds, loaded) -> None:
+    rows = evaluate_split_rows(
+        experiment="interactive_validation",
+        family=spec.family_name,
+        model=spec.display_name,
+        score=spec.score_name,
+        hyperparameters=spec.hyperparameters,
+        threshold_source="validation_best_f1",
+        data_split="validation",
+        split=validation,
+        scores=validation_scores,
+        threshold=threshold,
+        fit_seconds=fit_seconds,
+        extra={"model_source": "loaded" if loaded else "trained"},
+    )
+    print("\nValidation metrics")
+    print(f"model_source={'loaded' if loaded else 'trained'}  time={fit_seconds:.2f}s  threshold={threshold:.6g}")
+    for row in rows:
+        print(
+            f"- {row['metric_split']}: "
+            f"AUROC={row['auroc']:.4f}, AUPR={row['aupr']:.4f}, "
+            f"F1={row['f1']:.4f}, Precision={row['precision']:.4f}, "
+            f"Recall={row['recall']:.4f}, FPR={row['fpr']:.4f}, Acc={row['accuracy']:.4f}"
+        )
+
+
+def _load_interactive_embedder():
+    from BERT.embedding_utils import encode_texts, load_embedding_model
+
+    tokenizer, encoder, device = load_embedding_model()
+
+    def embed(text: str):
+        return encode_texts(
+            tokenizer,
+            encoder,
+            [text],
+            device,
+            batch_size=1,
+            show_progress=False,
+        )
+
+    return embed
+
+
+def interactive(force_train: bool = False) -> None:
+    train, _, validation, _ = load_standard_splits()
+    grouped = specs_by_family()
+
+    print("\nOOD_BANKING77 interactive tester")
+    print("Select a model family.")
+    for family_id in sorted(grouped):
+        print(f"{family_id}. {grouped[family_id][0].family_name}")
+
+    family_id = _choose_number("> ", min(grouped), max(grouped))
+    specs = grouped[family_id]
+
+    print("\nSelect a model.")
+    for idx, spec in enumerate(specs, start=1):
+        print(f"{idx}. {spec.display_name} ({spec.score_name})")
+
+    model_idx = _choose_number("> ", 1, len(specs))
+    spec = specs[model_idx - 1]
+
+    print(f"\nPreparing: {spec.display_name}")
+    model, loaded, fit_seconds = load_or_fit_model(spec, train, force_train=force_train)
+    threshold, validation_scores, _ = calibrate_threshold(spec, model, validation, "validation_best_f1")
+    _display_validation_metrics(spec, validation, validation_scores, threshold, fit_seconds, loaded)
+
+    print("\nLoading the embedding encoder once for interactive queries...")
+    embed_text = _load_interactive_embedder()
+    label_lookup = _label_lookup(train)
+    print("\nEnter a query to classify it as ID or OOD. Quit with q, quit, or exit.")
+    while True:
+        text = input("\nquery> ").strip()
+        if text.lower() in {"q", "quit", "exit"}:
+            print("Exiting.")
+            break
+        if not text:
+            continue
+
+        embeddings = embed_text(text)
+        scores, labels, _ = score_model(spec, model, embeddings)
+        score = float(scores[0])
+        predicted = "OOD" if score >= threshold else "ID"
+        label = label_lookup.get(str(labels[0]), str(labels[0]))
+        print(
+            f"{predicted} | score={score:.6g}, threshold={threshold:.6g}, "
+            f"nearest/predicted={label}"
+        )
 
 
 def main() -> None:
-    class_output_dir = CLASS_WISE_DIR / "outputs"
-    distribution_output_dir = DISTRIBUTION_DIR / "outputs"
-    train = load_npz(EMBEDDED_DIR / "OOD_train_embeddings.npz")
-    test = load_npz(EMBEDDED_DIR / "OOD_test_embeddings.npz")
-
-    evaluate("centroid", CentroidDistanceModel(class_output_dir / "centroid_distance_model.npz"), train, test)
-    evaluate("radius", RadiusThresholdModel(class_output_dir / "radius_threshold_model.npz"), train, test)
-    evaluate("mahalanobis", MahalanobisDistanceModel(class_output_dir / "mahalanobis_distance_model.npz"), train, test)
-
-    evaluate("knn_distance", KNNDistanceModel(distribution_output_dir / "knn_distance_model.npz", n_neighbors=1), train, test)
-    evaluate("global_mahalanobis", GlobalMahalanobisModel(distribution_output_dir / "global_mahalanobis_model.npz"), train, test)
-    evaluate(
-        "gaussian_mixture",
-        GaussianMixtureOODModel(
-            distribution_output_dir / "gaussian_mixture_model.pkl",
-            n_components=62,
-            covariance_type="full",
-            reg_covar=1e-5,
-            max_iter=200,
-        ),
-        train,
-        test,
-    )
-    evaluate(
-        "one_class_svm",
-        OneClassSVMModel(distribution_output_dir / "one_class_svm_model.pkl", nu=0.3, gamma=30.0),
-        train,
-        test,
-    )
-    evaluate(
-        "pca_reconstruction",
-        PCAReconstructionModel(distribution_output_dir / "pca_reconstruction_model.pkl", n_components=256),
-        train,
-        test,
-    )
+    args = parse_args()
+    try:
+        if args.list_models:
+            list_models()
+            return
+        if args.experiment:
+            selection = choose_experiment() if args.experiment == "menu" else args.experiment
+            run_experiment(selection, force_train=args.force_train)
+            return
+        interactive(force_train=args.force_train)
+    except KeyboardInterrupt:
+        print("\nExiting.")
 
 
 if __name__ == "__main__":

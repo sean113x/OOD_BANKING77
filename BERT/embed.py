@@ -25,6 +25,8 @@ DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "embedded"
 SPLITS = {
     "OOD_train": "OOD_train.csv",
     "classification_test": "classification_test.csv",
+    "OOD_validation": "OOD_validation.csv",
+    "OOD_test_eval": "OOD_test_eval.csv",
     "OOD_test": "OOD_test.csv",
 }
 

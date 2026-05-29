@@ -90,8 +90,6 @@ def main() -> None:
             clf = pickle.load(f)
 
         for score_name, score_fn in SCORE_FUNCTIONS.items():
-            if score_name == "Energy" and not hasattr(clf, "decision_function"):
-                continue
             scores = score_fn(clf, embeddings)
             for criterion, selector in (
                 ("best_f1", _best_f1),

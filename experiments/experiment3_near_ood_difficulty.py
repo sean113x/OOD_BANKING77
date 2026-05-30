@@ -1,9 +1,9 @@
-"""Experiment 3: near-OOD difficulty analysis.
+"""Experiment 3: Near-OOD ratio analysis.
 
-Near-OOD intents are grouped by their maximum centroid similarity to known
-training intents. Each model is calibrated on ``OOD_validation`` and evaluated
-on ID examples plus easy/medium/hard near-OOD groups from ``OOD_test_eval``.
-The output is one CSV file.
+Each model is calibrated on ``OOD_validation`` and evaluated on a fixed ID set
+plus an OOD pool whose Near-OOD ratio is swept from 0% to 100%. The total OOD
+sample count is held constant so the curve reflects semantic closeness rather
+than a changing number of OOD examples. The output is one CSV file.
 
 Usage:
   python experiments/experiment3_near_ood_difficulty.py
@@ -12,19 +12,22 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from experiments.common import (
     RESULT_DIR,
     all_model_specs,
     calibrate_threshold,
-    known_class_centroids,
     load_or_fit_model,
     load_standard_splits,
     metric_row,
-    normalized_rows,
     print_metric_table,
     score_model,
     write_csv,
@@ -38,54 +41,106 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--force-train", action="store_true")
+    parser.add_argument(
+        "--ratio-step",
+        type=int,
+        default=10,
+        help="Near-OOD percentage step size. Default: 10 for 0, 10, ..., 100.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=77,
+        help="Seed used for deterministic Near/Far OOD subsampling.",
+    )
+    parser.add_argument(
+        "--ood-total",
+        type=int,
+        default=None,
+        help="Fixed OOD sample count per ratio. Defaults to min(n_near, n_far).",
+    )
     return parser.parse_args()
 
 
-def difficulty_groups(train, eval_split):
-    known_labels, known_centroids = known_class_centroids(train)
-    eval_embeddings = normalized_rows(eval_split["embeddings"])
-    eval_labels = eval_split["label_texts"].astype(str)
-    ood_types = eval_split["ood_types"].astype(str)
-    near_labels = sorted(set(eval_labels[ood_types == "near"].tolist()))
+def near_ood_ratio_percents(ratio_step: int) -> list[int]:
+    if ratio_step <= 0 or ratio_step > 100:
+        raise ValueError("--ratio-step must be between 1 and 100.")
+    percents = list(range(0, 101, ratio_step))
+    if percents[-1] != 100:
+        percents.append(100)
+    return percents
 
-    intent_rows = []
-    for label in near_labels:
-        mask = (ood_types == "near") & (eval_labels == label)
-        centroid = normalized_rows(eval_embeddings[mask].mean(axis=0, keepdims=True))
-        similarities = centroid @ known_centroids.T
-        nearest_idx = int(np.argmax(similarities[0]))
-        intent_rows.append(
-            {
-                "label_text": label,
-                "max_known_similarity": float(similarities[0, nearest_idx]),
-                "nearest_known_intent": str(known_labels[nearest_idx]),
-                "n_near_samples": int(np.sum(mask)),
-            }
+
+def near_ood_ratio_groups(
+    eval_split,
+    *,
+    ratio_step: int = 10,
+    random_seed: int = 77,
+    ood_total: int | None = None,
+) -> list[dict[str, object]]:
+    ood_types = eval_split["ood_types"].astype(str)
+    id_indices = np.flatnonzero(ood_types == "id")
+    near_indices = np.flatnonzero(ood_types == "near")
+    far_indices = np.flatnonzero(ood_types == "far")
+
+    if len(id_indices) == 0:
+        raise ValueError("Evaluation split has no ID examples.")
+    if len(near_indices) == 0 or len(far_indices) == 0:
+        raise ValueError("Evaluation split must contain both Near-OOD and Far-OOD examples.")
+
+    max_balanced_ood_total = min(len(near_indices), len(far_indices))
+    fixed_ood_total = max_balanced_ood_total if ood_total is None else int(ood_total)
+    if fixed_ood_total <= 0:
+        raise ValueError("--ood-total must be positive.")
+    if fixed_ood_total > max_balanced_ood_total:
+        raise ValueError(
+            "--ood-total must be <= min(n_near, n_far) so both 0% and 100% ratios are feasible. "
+            f"Received {fixed_ood_total}, maximum is {max_balanced_ood_total}."
         )
 
-    intent_rows.sort(key=lambda row: row["max_known_similarity"])
-    buckets = np.array_split(np.array(intent_rows, dtype=object), 3)
-    names = ("easy", "medium", "hard")
-    groups = {}
-    for name, bucket in zip(names, buckets):
-        rows = [dict(row) for row in bucket.tolist()]
-        labels = {row["label_text"] for row in rows}
-        similarities = np.array([row["max_known_similarity"] for row in rows], dtype=float)
-        groups[name] = {
-            "labels": labels,
-            "intent_rows": rows,
-            "similarity_min": float(np.min(similarities)),
-            "similarity_mean": float(np.mean(similarities)),
-            "similarity_max": float(np.max(similarities)),
-        }
+    rng = np.random.default_rng(random_seed)
+    near_order = rng.permutation(near_indices)
+    far_order = rng.permutation(far_indices)
+
+    groups: list[dict[str, object]] = []
+    for percent in near_ood_ratio_percents(ratio_step):
+        near_count = int(round(fixed_ood_total * percent / 100.0))
+        far_count = fixed_ood_total - near_count
+        selected_ood_indices = np.concatenate(
+            [near_order[:near_count], far_order[:far_count]]
+        )
+        mask = np.zeros(len(ood_types), dtype=bool)
+        mask[id_indices] = True
+        mask[selected_ood_indices] = True
+
+        groups.append(
+            {
+                "near_ood_percent": percent,
+                "near_ood_ratio": percent / 100.0,
+                "near_ood_count": near_count,
+                "far_ood_count": far_count,
+                "ood_total": fixed_ood_total,
+                "mask": mask,
+            }
+        )
     return groups
 
 
-def run(output_path: Path = DEFAULT_OUTPUT, force_train: bool = False) -> Path:
+def run(
+    output_path: Path = DEFAULT_OUTPUT,
+    force_train: bool = False,
+    ratio_step: int = 10,
+    random_seed: int = 77,
+    ood_total: int | None = None,
+) -> Path:
     train, _, validation, eval_split = load_standard_splits()
-    groups = difficulty_groups(train, eval_split)
+    groups = near_ood_ratio_groups(
+        eval_split,
+        ratio_step=ratio_step,
+        random_seed=random_seed,
+        ood_total=ood_total,
+    )
     eval_ood_types = eval_split["ood_types"].astype(str)
-    eval_labels = eval_split["label_texts"].astype(str)
     rows = []
 
     for spec in all_model_specs():
@@ -93,33 +148,30 @@ def run(output_path: Path = DEFAULT_OUTPUT, force_train: bool = False) -> Path:
         threshold, _, _ = calibrate_threshold(spec, model, validation, strategy="validation_best_f1")
         eval_scores, _, score_seconds = score_model(spec, model, eval_split["embeddings"])
 
-        for difficulty, info in groups.items():
-            mask = (eval_ood_types == "id") | (
-                (eval_ood_types == "near") & np.isin(eval_labels, list(info["labels"]))
-            )
+        for info in groups:
+            mask = info["mask"]
             y_true = (eval_ood_types[mask] != "id").astype(int)
             scores = eval_scores[mask]
-            intent_names = sorted(info["labels"])
             extra = {
                 "model_key": spec.key,
                 "model_source": "loaded" if loaded else "trained",
-                "difficulty": difficulty,
-                "near_intent_count": len(intent_names),
-                "near_intents": ";".join(intent_names),
-                "similarity_min": info["similarity_min"],
-                "similarity_mean": info["similarity_mean"],
-                "similarity_max": info["similarity_max"],
+                "near_ood_percent": info["near_ood_percent"],
+                "near_ood_ratio": info["near_ood_ratio"],
+                "near_ood_count": info["near_ood_count"],
+                "far_ood_count": info["far_ood_count"],
+                "ood_total": info["ood_total"],
+                "sampling_seed": random_seed,
             }
             rows.append(
                 metric_row(
-                    experiment="experiment3_near_ood_difficulty",
+                    experiment="experiment3_near_ood_ratio",
                     family=spec.family_name,
                     model=spec.display_name,
                     score=spec.score_name,
                     hyperparameters=spec.hyperparameters,
                     threshold_source="validation_best_f1",
                     data_split="eval",
-                    metric_split=f"Near-OOD-{difficulty}",
+                    metric_split=f"Near-OOD-ratio-{int(info['near_ood_percent']):03d}pct",
                     y_true=y_true,
                     scores=scores,
                     threshold=threshold,
@@ -132,7 +184,7 @@ def run(output_path: Path = DEFAULT_OUTPUT, force_train: bool = False) -> Path:
     output = write_csv(output_path, rows)
     print_metric_table(
         rows,
-        "Experiment 3 metrics (eval / near-OOD difficulty groups)",
+        "Experiment 3 metrics (eval / Near-OOD ratio sweep)",
         metric_split=None,
         max_rows=120,
     )
@@ -141,7 +193,13 @@ def run(output_path: Path = DEFAULT_OUTPUT, force_train: bool = False) -> Path:
 
 def main() -> None:
     args = parse_args()
-    output = run(args.output, force_train=args.force_train)
+    output = run(
+        args.output,
+        force_train=args.force_train,
+        ratio_step=args.ratio_step,
+        random_seed=args.random_seed,
+        ood_total=args.ood_total,
+    )
     print(f"Wrote {output}")
 
 

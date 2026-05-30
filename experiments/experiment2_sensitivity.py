@@ -43,6 +43,22 @@ from experiments.common import (
 
 
 DEFAULT_OUTPUT = RESULT_DIR / "experiment2_hyperparameter_sensitivity.csv"
+SELECTION_METRIC = "f1"
+OCSVM_NU_VALUES = (0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.5)
+OCSVM_GAMMA_VALUES = ("scale", 0.01, 0.1, 1.0, 5.0, 10.0, 30.0)
+GMM_CONFIGS = (
+    (8, "diag"),
+    (16, "diag"),
+    (32, "diag"),
+    (62, "diag"),
+    (77, "diag"),
+    (128, "diag"),
+    (256, "diag"),
+    (16, "full"),
+    (32, "full"),
+    (62, "full"),
+    (128, "full"),
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,20 +170,21 @@ def model_configs() -> list[ModelSpec]:
             )
         )
 
-    for nu, gamma in ((0.05, "scale"), (0.1, "scale"), (0.3, 10.0), (0.3, 30.0)):
-        specs.append(
-            _custom_spec(
-                key=f"ocsvm_nu{str(nu).replace('.', '_')}_gamma{str(gamma).replace('.', '_')}",
-                display_name="One-Class SVM",
-                family_name="Distance/support/density",
-                score_name="negative_decision_function",
-                hyperparameters=f"kernel=rbf, nu={nu}, gamma={gamma}",
-                cls=OneClassSVMModel,
-                kwargs={"nu": nu, "gamma": gamma},
+    for nu in OCSVM_NU_VALUES:
+        for gamma in OCSVM_GAMMA_VALUES:
+            specs.append(
+                _custom_spec(
+                    key=f"ocsvm_nu{str(nu).replace('.', '_')}_gamma{str(gamma).replace('.', '_')}",
+                    display_name="One-Class SVM",
+                    family_name="Distance/support/density",
+                    score_name="negative_decision_function",
+                    hyperparameters=f"kernel=rbf, nu={nu}, gamma={gamma}",
+                    cls=OneClassSVMModel,
+                    kwargs={"nu": nu, "gamma": gamma},
+                )
             )
-        )
 
-    for n_components, covariance_type in ((16, "diag"), (32, "diag"), (62, "diag"), (62, "full")):
+    for n_components, covariance_type in GMM_CONFIGS:
         specs.append(
             _custom_spec(
                 key=f"gmm_c{n_components}_{covariance_type}",
@@ -251,6 +268,53 @@ def _thresholds(spec: ModelSpec, model, train, validation, validation_scores):
     ]
 
 
+def _selection_key(row: dict) -> tuple[str, str, str, str]:
+    return (
+        str(row["family"]),
+        str(row["model"]),
+        str(row["score"]),
+        str(row["threshold_source"]),
+    )
+
+
+def _annotate_validation_selection(rows: list[dict]) -> None:
+    validation_overall = [
+        row
+        for row in rows
+        if row["data_split"] == "validation" and row["metric_split"] == "Overall"
+    ]
+    grouped: dict[tuple[str, str, str, str], list[dict]] = {}
+    for row in validation_overall:
+        grouped.setdefault(_selection_key(row), []).append(row)
+
+    selected_by_group = {}
+    rank_by_group_and_model = {}
+    for key, group_rows in grouped.items():
+        ranked = sorted(
+            group_rows,
+            key=lambda row: (
+                float(row.get(SELECTION_METRIC, float("-inf"))),
+                float(row.get("balanced_accuracy", float("-inf"))),
+                float(row.get("auroc", float("-inf"))),
+            ),
+            reverse=True,
+        )
+        selected_by_group[key] = ranked[0]
+        for rank, row in enumerate(ranked, start=1):
+            rank_by_group_and_model[(key, row["model_key"])] = rank
+
+    for row in rows:
+        key = _selection_key(row)
+        selected = selected_by_group[key]
+        row["validation_selection_metric"] = SELECTION_METRIC
+        row["validation_selection_group"] = " | ".join(key)
+        row["validation_selected_model_key"] = selected["model_key"]
+        row["validation_selected_hyperparameters"] = selected["hyperparameters"]
+        row["validation_selected_score"] = selected[SELECTION_METRIC]
+        row["validation_selection_rank"] = rank_by_group_and_model[(key, row["model_key"])]
+        row["is_validation_selected"] = row["model_key"] == selected["model_key"]
+
+
 def run(output_path: Path = DEFAULT_OUTPUT) -> Path:
     train, _, validation, eval_split = load_standard_splits()
     rows = []
@@ -296,10 +360,16 @@ def run(output_path: Path = DEFAULT_OUTPUT) -> Path:
                 )
             )
 
+    _annotate_validation_selection(rows)
     output = write_csv(output_path, rows)
     print_metric_table(
         rows,
         "Experiment 2 metrics (eval / Overall)",
+        max_rows=120,
+    )
+    print_metric_table(
+        [row for row in rows if row["is_validation_selected"]],
+        "Experiment 2 validation-selected configs (eval / Overall)",
         max_rows=120,
     )
     return output

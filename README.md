@@ -256,7 +256,7 @@ opening the CSV.
 | --- | --- | --- |
 | 1 | Overall method comparison across implemented OOD families | `experiments/results/experiment1_overall_comparison.csv` |
 | 2 | Hyperparameter and threshold sensitivity | `experiments/results/experiment2_hyperparameter_sensitivity.csv` |
-| 3 | Near-OOD difficulty by centroid similarity to known intents | `experiments/results/experiment3_near_ood_difficulty.csv` |
+| 3 | Near-OOD ratio sweep from 0% to 100% within a fixed-size OOD pool | `experiments/results/experiment3_near_ood_difficulty.csv` |
 | 4 | Closed-set classification accuracy vs OOD reliability | `experiments/results/experiment4_accuracy_vs_ood.csv` |
 
 Experiment 2 can take longer than the others because it fits multiple

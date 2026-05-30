@@ -19,7 +19,7 @@ from experiments.common import (
 EXPERIMENTS = {
     "1": ("Experiment 1: overall method comparison", "experiments.experiment1_overall_comparison"),
     "2": ("Experiment 2: hyperparameter sensitivity", "experiments.experiment2_sensitivity"),
-    "3": ("Experiment 3: near-OOD difficulty", "experiments.experiment3_near_ood_difficulty"),
+    "3": ("Experiment 3: Near-OOD ratio sweep", "experiments.experiment3_near_ood_difficulty"),
     "4": ("Experiment 4: accuracy vs OOD reliability", "experiments.experiment4_accuracy_vs_ood"),
 }
 
